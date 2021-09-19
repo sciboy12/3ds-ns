@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 import re
-import os
+import sys, os
 import configparser
 from pathlib import Path
 import threading, time
@@ -15,7 +15,7 @@ from joycontrol.controller import Controller
 from joycontrol.memory import FlashMemory
 
 def clear():
-    #pass
+    pass
     subprocess.run(["clear"])
 
 def get_paired():
@@ -42,13 +42,14 @@ class r_stick_state:
         controller_state.r_stick_state.set_v(value)
 
 class switch:
-    
-    def extract_mac(device):
+    # Strips Bluetooth entry down to MAC Address
+    def strip_mac(device):
         device = device.replace("Device ", "")
         device = device.replace(" Nintendo Switch", "")
         mac = device.replace("\n", "")
         return mac
     
+    # Connects to specified MAC Address
     async def connect(mac):
                 
         # Create memory containing default controller stick calibration
@@ -76,7 +77,9 @@ class switch:
 
         clear()
         print("Connected.")
-
+        print("Note that entering the Change Grip/Order screen will crash this program.")
+        
+    # Pairs computer to Switch
     async def pair():
                         
         # Create memory containing default controller stick calibration
@@ -97,12 +100,12 @@ class switch:
         # Get list again after pairing
         device_list_new = get_paired()
         # Remove old list from new to isolate device
-        device = device_list_new.replace(device_list_old, "")
+        device = device_list_new.replace(device_list_old, '')
         # Strip off extra to yield mac address
-        device = extract_mac(device)
+        device = strip_mac(device)
 
         print("Now paired to " + device)
-        print("Enter a device name for this Switch, or press Ctrl+C to skip.")
+        print("Enter a username to represent this Switch, or press Ctrl+C if already paired previously.")
         try:
             name = input(": ")
             config = configparser.ConfigParser(delimiters=('='))
@@ -113,7 +116,7 @@ class switch:
         except KeyboardInterrupt:
             pass
         
-    
+    # Unpairs computer from Switch (WIP)
     async def unpair():
         clear()
         print("This function is not implemented yet.")
@@ -123,7 +126,7 @@ class switch:
         while True:
             choice = input()
             if int(choice) in range(0, device_count):
-                mac = switch.extract_mac(device_list[int(choice)])
+                mac = switch.strip_mac(device_list[int(choice)])
                 break
             else:
                 print("Invalid input.")
@@ -135,21 +138,18 @@ class switch:
         with open('/root/config.ini', 'w') as configfile:
                 configfile.write("[devices]")
 
+# Handles forwarding of events
 async def event_loop(mac):
     from evdev import ecodes, InputDevice, list_devices
     import re
 
     global controller_state
 
-    controller_state.button_state.set_button('r_stick', True)    
-    await asyncio.sleep(0.1)
-    controller_state.button_state.set_button('r_stick', False)
-        
+    # Get reference to 3DS evdev device
     devices = [InputDevice(path) for path in list_devices()]
     for device in devices:
             if bool(re.search('Nintendo 3DS', device.name)) == True:
                 ds = InputDevice(device.path)
-
     ds.grab()
 
     btn_mapping = {
@@ -197,7 +197,7 @@ async def event_loop(mac):
         except KeyError:
             pass
 
-
+# Main menu
 async def menu():
     devices = get_paired()
     n_devices = devices.count('\n')
@@ -208,9 +208,9 @@ async def menu():
         device = str(out.stdout.readline().decode())
         if "Nintendo Switch" in device:
             # Strip off extra to yield mac address
-            switch.extract_mac(device)
+            switch.strip_mac(device)
             # Append mac to list of switches
-            device_list.append(device)
+            device_list.insert(0, device)
 
     config = configparser.ConfigParser(delimiters=('='))
     config.read('/root/config.ini')
@@ -228,14 +228,21 @@ async def menu():
     # Generate text for prompt
     for option in config.options("devices"):
         name = config.get("devices", option)
-        choice_list = choice_list + str(device_count + 1) + ") " + name + "\n"
+        choice_list = choice_list + str(device_count + 1) + ") " + name
+
+        # Append "'s" only when needed
+        if not name[-1] == 's':
+            choice_list = choice_list + "'s Switch\n"
+        else:
+             choice_list = choice_list + " Switch\n"
+
         device_count = device_count + 1
-        
     while True:
         clear()
         choice = input("Please select a Switch:\n" + choice_list + " \
                        \np) Pair New \
-                       \nu) Unpair Device\n\n: ")
+                       \nu) Unpair Device \
+                       \nq) Exit\n: ")
 
         if str(choice) == 'p':
             await switch.pair()
@@ -243,42 +250,27 @@ async def menu():
         elif str(choice) == 'u':
             await switch.unpair()
             await menu()
-        
-        elif int(choice) in range(0, device_count):
-
-            mac = switch.extract_mac(device_list[int(choice)])
+        elif str(choice) == 'q':
+            print("Exiting...")
+            sys.exit()
+        elif int(choice) in range(1, device_count + 1):
+            print(device_count)
+            mac = switch.strip_mac(device_list[int(choice) - 1])
             clear()
             print("Scanning...")
             await switch.connect(mac)
             await event_loop(mac)
-            #break
         else:
             print("Invalid input.")
-        
-try:
-    
-    # Elevate to root user if needed
-    if os.getuid() != 0:
-        elevate()
-        
-    devices = get_paired()
-    n_devices = devices.count('\\n')
-    device_list = []
-    name_list = []
-    for i in range(0, n_devices):
-        
-        device = str(out.stdout.readline().decode())
-        if "Nintendo Switch" in device:
-            # Strip off extra to yield mac address
-            extract_mac(device)
-            device_list.append(device)
-
+            
+# Elevate to root user if needed
+if os.getuid() != 0:
+    elevate()
+try:    
     loop = asyncio.get_event_loop()
     loop.create_task(menu())
     loop.run_forever()
-    exit()
     
-except OSError as e:
-    print(e)
-    #print("Unable to connect. Exiting...")
+except KeyboardInterrupt:
+    print("Exiting...")
     exit()
