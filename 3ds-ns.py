@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 import asyncio
-import re
 import sys, os
 import configparser
 from pathlib import Path
-import threading, time
 from numpy import interp
-from itertools import islice
 from elevate import elevate
 import subprocess
 from joycontrol.protocol import controller_protocol_factory
