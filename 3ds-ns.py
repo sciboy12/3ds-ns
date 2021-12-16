@@ -1,19 +1,36 @@
 #!/usr/bin/env python3
 import asyncio
+import re
 import sys, os
 import configparser
 from pathlib import Path
+import threading, time
 from numpy import interp
+from itertools import islice
 from elevate import elevate
 import subprocess
 from joycontrol.protocol import controller_protocol_factory
 from joycontrol.server import create_hid_server
 from joycontrol.controller import Controller
 from joycontrol.memory import FlashMemory
+import argparse
+
+debug = False
+config_path = '/root/3ds-ns.ini'
+
+# WIP
+##parser = argparse.ArgumentParser()
+##parser.add_argument("--debug", help="Enable debug mode", dest='debug', action="store_true")
+##parser.add_argument("--mac", type=str, help="Connect to specified MAC")
+##args = parser.parse_args()
+##debug = args.debug
+##print(args)
 
 def clear():
-    pass
-    subprocess.run(["clear"])
+    if debug:
+        pass
+    else:
+        subprocess.run(["clear"])
 
 def get_paired():
     out = subprocess.Popen(["bluetoothctl", "paired-devices"], stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -40,11 +57,12 @@ class r_stick_state:
 
 class switch:
     # Strips Bluetooth entry down to MAC Address
-    def strip_mac(device):
+    def strip_name(device):
         device = device.replace("Device ", "")
         device = device.replace(" Nintendo Switch", "")
         mac = device.replace("\n", "")
         return mac
+
     
     # Connects to specified MAC Address
     async def connect(mac):
@@ -74,7 +92,7 @@ class switch:
 
         clear()
         print("Connected.")
-        print("Note that entering the Change Grip/Order screen will crash this program.")
+        print("Note that re-entering the Change Grip/Order screen will crash this program.")
         
     # Pairs computer to Switch
     async def pair():
@@ -99,7 +117,7 @@ class switch:
         # Remove old list from new to isolate device
         device = device_list_new.replace(device_list_old, '')
         # Strip off extra to yield mac address
-        device = strip_mac(device)
+        device = switch.strip_name(device)
 
         print("Now paired to " + device)
         print("Enter a username to represent this Switch, or press Ctrl+C if already paired previously.")
@@ -107,8 +125,9 @@ class switch:
             name = input(": ")
             config = configparser.ConfigParser(delimiters=('='))
             config['devices'] = {device: name}
-            with open('/root/config.ini', 'r+') as configfile:
-                config.read('/root/config.ini')
+            
+            with open(config_path, 'r+') as configfile:
+                config.read(config_path)
                 config.write(configfile)
         except KeyboardInterrupt:
             pass
@@ -123,20 +142,20 @@ class switch:
         while True:
             choice = input()
             if int(choice) in range(0, device_count):
-                mac = switch.strip_mac(device_list[int(choice)])
+                mac = switch.strip_name(device_list[int(choice)])
                 break
             else:
                 print("Invalid input.")
         out = subprocess.Popen(["bluetoothctl", device], stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        config.read('/root/config.ini')
+        config.read(config_path)
 
         config.remove_option("devices", mac)
 
-        with open('/root/config.ini', 'w') as configfile:
+        with open(config_path, 'w') as configfile:
                 configfile.write("[devices]")
 
 # Handles forwarding of events
-async def event_loop(mac):
+async def event_loop():
     from evdev import ecodes, InputDevice, list_devices
     import re
 
@@ -205,35 +224,44 @@ async def menu():
         device = str(out.stdout.readline().decode())
         if "Nintendo Switch" in device:
             # Strip off extra to yield mac address
-            switch.strip_mac(device)
+            switch.strip_name(device)
             # Append mac to list of switches
             device_list.insert(0, device)
 
     config = configparser.ConfigParser(delimiters=('='))
-    config.read('/root/config.ini')
+    config.read(config_path)
     choice_list = ""
     device_count = 0
     
     # Create config.ini if it does not exist
-    if not Path("/root/config.ini").is_file():
+    if not Path(config_path).is_file():
         config['devices'] = {}
-        subprocess.run(["touch", "/root/config.ini"])
+        subprocess.run(["touch", config_path])
         
-        with open('/root/config.ini', 'w') as configfile:
+        with open(config_path, 'w') as configfile:
             configfile.write("[devices]")
-
+            
+    # Check if a MAC is specified via args
+##    print(args.mac)
+##    if "args.mac" in locals():
+##        await switch.connect(args.mac)
+        
     # Generate text for prompt
     for option in config.options("devices"):
         name = config.get("devices", option)
+
         choice_list = choice_list + str(device_count + 1) + ") " + name
 
         # Append "'s" only when needed
         if not name[-1] == 's':
-            choice_list = choice_list + "'s Switch\n"
+            choice_list = choice_list + "'s Switch"
         else:
-             choice_list = choice_list + " Switch\n"
-
+             choice_list = choice_list + " Switch"
+        
+        tmp_mac = switch.strip_name(device_list[device_count])
+        choice_list = choice_list + " [" + tmp_mac + "]\n"
         device_count = device_count + 1
+
     while True:
         clear()
         choice = input("Please select a Switch:\n" + choice_list + " \
@@ -248,15 +276,16 @@ async def menu():
             await switch.unpair()
             await menu()
         elif str(choice) == 'q':
+            clear()
             print("Exiting...")
-            sys.exit()
+            exit()
         elif int(choice) in range(1, device_count + 1):
             print(device_count)
-            mac = switch.strip_mac(device_list[int(choice) - 1])
+            mac = switch.strip_name(device_list[int(choice)])
             clear()
             print("Scanning...")
             await switch.connect(mac)
-            await event_loop(mac)
+            await event_loop()
         else:
             print("Invalid input.")
             
@@ -269,5 +298,6 @@ try:
     loop.run_forever()
     
 except KeyboardInterrupt:
+    clear()
     print("Exiting...")
     exit()
